@@ -23,7 +23,10 @@ def check_correctness(problem: Dict, completion: str, timeout: float, index_from
     """
     assert index_from in [0, 1]
 
+    receive_result, send_result = multiprocessing.Pipe(duplex=False)
+
     def unsafe_execute():
+        outcome = "timed out"
 
         with create_tempdir():
 
@@ -60,33 +63,37 @@ def check_correctness(problem: Dict, completion: str, timeout: float, index_from
 # uncomment the following line and proceed at your own risk:
                         # exec(check_program, exec_globals)
                         eval_program_with_calls(check_program, perturbation=None if index_from == 0 else "one_based_indexing", return_output=False)
-                result.append("passed")
+                outcome = "passed"
             except TimeoutException:
-                result.append("timed out")
+                outcome = "timed out"
             except BaseException as e:
-                result.append(f"failed: {e}")
+                outcome = f"failed: {e}"
 
             # Needed for cleaning up.
             shutil.rmtree = rmtree
             os.rmdir = rmdir
             os.chdir = chdir
 
-    manager = multiprocessing.Manager()
-    result = manager.list()
+        try:
+            send_result.send(outcome)
+        finally:
+            send_result.close()
 
     p = multiprocessing.Process(target=unsafe_execute)
     p.start()
+    send_result.close()
     p.join(timeout=timeout + 1)
     if p.is_alive():
         p.kill()
+        p.join()
 
-    if not result:
-        result.append("timed out")
+    result = receive_result.recv() if receive_result.poll() else "timed out"
+    receive_result.close()
 
     return dict(
         task_id=problem["task_id"],
-        passed=result[0] == "passed",
-        result=result[0],
+        passed=result == "passed",
+        result=result,
         completion_id=completion_id,
     )
 

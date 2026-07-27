@@ -1,0 +1,10 @@
+__pycache__/
+*.py[cod]
+
+# Locally generated/downloaded benchmark inputs. The FOLIO-derived logic data is
+# gated and must not be republished from this fork.
+/logic/data/
+/data/guitar.json
+
+# Legacy scripts write model outputs into the source tree when run directly.
+/chess/output/
