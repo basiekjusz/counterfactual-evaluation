@@ -94,6 +94,8 @@ def parse_bool(flag):
 
 def main(data_file, model_name, output_file, type, cot):
     data = load_data(data_file)
+    if os.environ.get("BTD_LIMIT"):
+        data = data[: int(os.environ["BTD_LIMIT"])]
     cot = parse_bool(cot)
 
     assert not os.path.exists(output_file)
@@ -110,12 +112,8 @@ if __name__ == "__main__":
         main(
             *sys.argv[1:]
         )  # pylint: disable=no-value-for-parameter,too-many-function-args
-    except Exception as e:
-        import pdb
+    except Exception:
         import traceback
 
-        if not isinstance(e, (pdb.bdb.BdbQuit, KeyboardInterrupt)):
-            print("\n" + ">" * 100 + "\n")
-            traceback.print_exc()
-            print()
-            pdb.post_mortem()
+        traceback.print_exc()
+        raise SystemExit(1)

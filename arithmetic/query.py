@@ -73,6 +73,8 @@ def main(data_file, base, model_name, output_file, cot=True, n_shots=0):
     cot = parse_bool(cot)
     n_shots = int(n_shots)
     data = load_data(data_file)
+    if os.environ.get("BTD_LIMIT"):
+        data = data[: int(os.environ["BTD_LIMIT"])]
 
     assert not os.path.exists(output_file)
 
@@ -87,12 +89,8 @@ def main(data_file, base, model_name, output_file, cot=True, n_shots=0):
 if __name__ == "__main__":
     try:
         main(*sys.argv[1:])  # pylint: disable=no-value-for-parameter,too-many-function-args
-    except Exception as e:
-        import pdb
+    except Exception:
         import traceback
 
-        if not isinstance(e, (pdb.bdb.BdbQuit, KeyboardInterrupt)):
-            print("\n" + ">" * 100 + "\n")
-            traceback.print_exc()
-            print()
-            pdb.post_mortem()
+        traceback.print_exc()
+        raise SystemExit(1)

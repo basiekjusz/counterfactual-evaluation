@@ -52,10 +52,11 @@ def parse_bool(flag):
 
 def main(model_name: str = "gpt-4-0314", cot: bool = True):
     cot = parse_bool(cot)
+    output_root = os.environ.get("BTD_CHESS_OUTPUT_ROOT", "chess/output")
     for exp in os.listdir("chess/data"):
         if "chess" in exp:
             data_dir = os.path.join("chess/data", exp)
-            output_dir = f"chess/output/{exp}/{model_name.replace('models/', '')}_0cot{cot}"
+            output_dir = f"{output_root}/{exp}/{model_name.replace('models/', '')}_0cot{cot}"
             pathlib.Path(output_dir).mkdir(parents=True, exist_ok=True)
             for mode in ["real_world", "counter_factual"]:
                 pieces = ["white bishop", "black bishop", "white knight", "black knight"]
@@ -94,12 +95,8 @@ def main(model_name: str = "gpt-4-0314", cot: bool = True):
 if __name__ == "__main__":
     try:
         main(*sys.argv[1:])  # pylint: disable=no-value-for-parameter,too-many-function-args
-    except Exception as e:
-        import pdb
+    except Exception:
         import traceback
 
-        if not isinstance(e, (pdb.bdb.BdbQuit, KeyboardInterrupt)):
-            print("\n" + ">" * 100 + "\n")
-            traceback.print_exc()
-            print()
-            pdb.post_mortem()
+        traceback.print_exc()
+        raise SystemExit(1)

@@ -175,7 +175,8 @@ readable_name = {
 
 
 def main(model_name=None):
-    for exp in os.listdir("chess/output"):
+    output_root = os.environ.get("BTD_CHESS_OUTPUT_ROOT", "chess/output")
+    for exp in os.listdir(output_root):
         if "chess" not in exp:
             continue
         # BTD: upstream hardcoded the 4 original model dirs; we pass the (slash-safe) OpenRouter slug
@@ -183,9 +184,9 @@ def main(model_name=None):
         if model_name is not None:
             _dirnames = [f"{model_name}_0cotTrue", f"{model_name}_0cotFalse"]
         else:
-            _dirnames = sorted(os.listdir(f"chess/output/{exp}"))
+            _dirnames = sorted(os.listdir(f"{output_root}/{exp}"))
         for dirname in _dirnames:
-            for output_dir in [f"chess/output/{exp}/{dirname}"]:
+            for output_dir in [f"{output_root}/{exp}/{dirname}"]:
                 if not os.path.exists(output_dir):
                     continue
                 cot = dirname.endswith("cotTrue")
@@ -274,12 +275,8 @@ if __name__ == "__main__":
         main(
             *sys.argv[1:]
         )  # pylint: disable=no-value-for-parameter,too-many-function-args
-    except Exception as e:
-        import pdb
+    except Exception:
         import traceback
 
-        if not isinstance(e, (pdb.bdb.BdbQuit, KeyboardInterrupt)):
-            print("\n" + ">" * 100 + "\n")
-            traceback.print_exc()
-            print()
-            pdb.post_mortem()
+        traceback.print_exc()
+        raise SystemExit(1)

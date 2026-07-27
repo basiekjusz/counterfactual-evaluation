@@ -1,8 +1,11 @@
 import aiohttp
 import asyncio
+import hashlib
 import json
 import os
 import pickle
+import sqlite3
+from datetime import datetime, timezone
 from math import ceil, log2
 from random import random
 
@@ -24,10 +27,72 @@ palm_initialized = False
 
 HISTORY_FILE = os.environ.get("QUERY_HISTORY_FILE", "history.jsonl")
 CACHE_FILE = os.environ.get("QUERY_CACHE_FILE", "query_cache.pkl")  # BTD: per-model cache isolation
+INTERACTIONS_FILE = os.environ.get("QUERY_INTERACTIONS_FILE")
 OPENAI_REFRESH_QUOTA = 60
 OPENAI_EXP_CAP = int(ceil(log2(OPENAI_REFRESH_QUOTA)))
 PALM_MAX_CANDIDATE_COUNT = 8
 BATCH_SIZE = 300  # sometimes APIs complain if we too many concurrent requests
+
+
+def _canonical_json(value):
+    return json.dumps(value, sort_keys=True, separators=(",", ":"), ensure_ascii=False)
+
+
+def _request_payload(
+    prompt,
+    model_name,
+    system_msg,
+    history,
+    max_tokens,
+    temperature,
+    num_beams,
+    n,
+    openai_kwargs,
+):
+    """Return the complete, stable request representation used by the thesis cache."""
+    return {
+        "schema_version": 1,
+        "prompt": prompt,
+        "model": model_name,
+        "system_message": system_msg,
+        "history": history,
+        "max_tokens": max_tokens,
+        "temperature": temperature,
+        "num_beams": num_beams,
+        "n": n,
+        "openai_kwargs": openai_kwargs,
+        "api_base": os.environ.get("OPENAI_API_BASE", "https://openrouter.ai/api/v1"),
+    }
+
+
+def _request_key(payload):
+    return hashlib.sha256(_canonical_json(payload).encode("utf-8")).hexdigest()
+
+
+def _sqlite_connect(path):
+    os.makedirs(os.path.dirname(os.path.abspath(path)), exist_ok=True)
+    conn = sqlite3.connect(path, timeout=30)
+    conn.execute("PRAGMA journal_mode=WAL")
+    conn.execute(
+        """
+        CREATE TABLE IF NOT EXISTS responses (
+            cache_key TEXT PRIMARY KEY,
+            request_json TEXT NOT NULL,
+            response_json TEXT NOT NULL,
+            created_at TEXT NOT NULL
+        )
+        """
+    )
+    return conn
+
+
+def _append_interactions(records):
+    if not INTERACTIONS_FILE:
+        return
+    os.makedirs(os.path.dirname(os.path.abspath(INTERACTIONS_FILE)), exist_ok=True)
+    with open(INTERACTIONS_FILE, "a", encoding="utf-8") as stream:
+        for record in records:
+            stream.write(_canonical_json(record) + "\n")
 
 
 async def query_openai(
@@ -206,36 +271,66 @@ def query_batch(
     if _btd_limit is not None:
         prompts = prompts[: int(_btd_limit)]
 
+    use_sqlite = str(CACHE_FILE).endswith((".sqlite", ".sqlite3", ".db"))
+    payloads = {
+        prompt: _request_payload(
+            prompt,
+            model_name,
+            system_msg,
+            history,
+            max_tokens,
+            temperature,
+            num_beams,
+            n,
+            openai_kwargs,
+        )
+        for prompt in prompts
+    }
+
+    # Keep the legacy pickle backend available for upstream compatibility, but thesis runs always
+    # supply a .sqlite3 path. SQLite gives us atomic writes, WAL concurrency, and inspectable keys.
     cache = {}
-    if not skip_cache and os.path.exists(CACHE_FILE):
-        cache = pickle.load(open(CACHE_FILE, "rb"))
+    if use_sqlite:
+        conn = _sqlite_connect(CACHE_FILE)
+        if not skip_cache:
+            for prompt in prompts:
+                key = _request_key(payloads[prompt])
+                row = conn.execute(
+                    "SELECT response_json FROM responses WHERE cache_key = ?", (key,)
+                ).fetchone()
+                if row is not None:
+                    cache[key] = json.loads(row[0])
+        prompt2key = lambda p: _request_key(payloads[p])
+    else:
+        conn = None
+        if not skip_cache and os.path.exists(CACHE_FILE):
+            cache = pickle.load(open(CACHE_FILE, "rb"))
 
-    # sorry this is ugly, but for backward compatibility
-    prompt2key = lambda p: (
-        p,
-        model_name,
-        system_msg,
-        tuple(history) if history is not None else None,
-        max_tokens,
-        temperature,
-        num_beams,
-    ) if n == 1 else (
-        p,
-        model_name,
-        system_msg,
-        tuple(history) if history is not None else None,
-        max_tokens,
-        temperature,
-        num_beams,
-        n,
-    )
+        # Upstream-compatible key shape for old caches.
+        prompt2key = lambda p: (
+            p,
+            model_name,
+            system_msg,
+            tuple(history) if history is not None else None,
+            max_tokens,
+            temperature,
+            num_beams,
+        ) if n == 1 else (
+            p,
+            model_name,
+            system_msg,
+            tuple(history) if history is not None else None,
+            max_tokens,
+            temperature,
+            num_beams,
+            n,
+        )
 
-    unseen_prompts = set()
-    for prompt in prompts:
-        key = prompt2key(prompt)
-        if key not in cache:
-            unseen_prompts.add(prompt)
-    unseen_prompts = list(unseen_prompts)
+    initial_hits = {prompt: prompt2key(prompt) in cache for prompt in prompts}
+    # Preserve first-seen ordering; set() made API call order and histories nondeterministic.
+    unseen_prompts = list(dict.fromkeys(
+        prompt for prompt in prompts if prompt2key(prompt) not in cache
+    ))
 
     if len(unseen_prompts) > 0:
         if model_name in {"claude-v1.3"}:
@@ -303,17 +398,36 @@ def query_batch(
                 **openai_kwargs,
             )
 
-        # Reload cache for better concurrency. Otherwise multiple query processes can overwrite
-        # each other
-        cache = {}
-        if not skip_cache:
-            if os.path.exists(CACHE_FILE):
+        if use_sqlite:
+            now = datetime.now(timezone.utc).isoformat()
+            for prompt, response in zip(unseen_prompts, responses, strict=True):
+                key = prompt2key(prompt)
+                cache[key] = response
+                if not skip_cache:
+                    conn.execute(
+                        """
+                        INSERT OR IGNORE INTO responses
+                            (cache_key, request_json, response_json, created_at)
+                        VALUES (?, ?, ?, ?)
+                        """,
+                        (
+                            key,
+                            _canonical_json(payloads[prompt]),
+                            _canonical_json(response),
+                            now,
+                        ),
+                    )
+            if not skip_cache:
+                conn.commit()
+        else:
+            # Reload pickle for upstream's best-effort multi-process behavior.
+            cache = {}
+            if not skip_cache and os.path.exists(CACHE_FILE):
                 cache = pickle.load(open(CACHE_FILE, "rb"))
-        for prompt, response in zip(unseen_prompts, responses, strict=True):
-            key = prompt2key(prompt)
-            cache[key] = response
-        if not skip_cache:
-            pickle.dump(cache, open(CACHE_FILE, "wb"))
+            for prompt, response in zip(unseen_prompts, responses, strict=True):
+                cache[prompt2key(prompt)] = response
+            if not skip_cache:
+                pickle.dump(cache, open(CACHE_FILE, "wb"))
 
     interactions_save_path = os.environ.get("INTERACTIONS_SAVE_PATH")
     if interactions_save_path is not None:
@@ -333,4 +447,20 @@ def query_batch(
                     + "\n"
                 )
 
-    return [cache[prompt2key(prompt)] for prompt in prompts]
+    results = [cache[prompt2key(prompt)] for prompt in prompts]
+    _append_interactions(
+        [
+            {
+                "schema_version": 1,
+                "request_key": prompt2key(prompt),
+                "request": payloads[prompt],
+                "response": response,
+                "cache_hit": initial_hits[prompt],
+                "recorded_at": datetime.now(timezone.utc).isoformat(),
+            }
+            for prompt, response in zip(prompts, results, strict=True)
+        ]
+    )
+    if conn is not None:
+        conn.close()
+    return results
