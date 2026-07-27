@@ -174,16 +174,22 @@ readable_name = {
 }
 
 
-def main():
+def main(model_name=None):
     for exp in os.listdir("chess/output"):
         if "chess" not in exp:
             continue
-        for model_name in ["gpt-4-0314", "gpt-3.5-turbo-0301", "claude-v1.3", "models/text-bison-001"]:
-            for cot in [True, False]:
-                output_dir = f"chess/output/{exp}/{model_name.replace('models/', '')}_0cot{cot}"
+        # BTD: upstream hardcoded the 4 original model dirs; we pass the (slash-safe) OpenRouter slug
+        # and evaluate exactly that model's output dir(s). With no arg, scan every dir under the exp.
+        if model_name is not None:
+            _dirnames = [f"{model_name}_0cotTrue", f"{model_name}_0cotFalse"]
+        else:
+            _dirnames = sorted(os.listdir(f"chess/output/{exp}"))
+        for dirname in _dirnames:
+            for output_dir in [f"chess/output/{exp}/{dirname}"]:
                 if not os.path.exists(output_dir):
                     continue
-                print("="*25, exp, readable_name[model_name], f"cot = {cot}", "="*25)
+                cot = dirname.endswith("cotTrue")
+                print("="*25, exp, dirname, f"cot = {cot}", "="*25)
 
                 for mode in ["real_world", "counter_factual"]:
                     # control
@@ -203,7 +209,7 @@ def main():
                     with open(output_file, "r") as f:
                         for line in f:
                             line = line.lower()
-                            question, answer = line.split("*")
+                            question, answer = line.split("*", 1)  # BTD: model output may contain '*'
                             question = question.strip()
                             answer = answer.strip()
                             for pos in gt_dict[question]:
@@ -226,7 +232,7 @@ def main():
                             with open(output_file, "r") as f:
                                 for line in f:
                                     line = line.strip().replace("\\n", ". ").replace("\"", " ").replace("\t", " ")
-                                    answer = line.split("*")[1].lower()
+                                    answer = line.split("*", 1)[1].lower()  # BTD: output may contain '*'
                                     answer = answer.replace(".", " ")
                                     success = False
                                     if answer.endswith(" yes") or " yes " in answer or " yes, " in answer or " yes " in answer or " yes." in answer:

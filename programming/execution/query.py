@@ -110,6 +110,12 @@ def main(data_file, model_name, output_file, index_from, fn_name=None, cot=True)
             continue
         templatized.append((prompt, program, filtered_call_indices))
 
+    # BTD: keep templatized in lock-step with query_batch's BTD_LIMIT prompt truncation so the
+    # zip(..., strict=True) below doesn't raise (responses are shorter than the full templatized set).
+    _btd_limit = os.environ.get("BTD_LIMIT")
+    if _btd_limit is not None:
+        templatized = templatized[: int(_btd_limit)]
+
     responses = query_batch([prompt for prompt, _, _ in templatized], model_name)
 
     with open(output_file, "w") as log:

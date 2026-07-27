@@ -137,7 +137,9 @@ def parse_output(raw_output: str, strings, strict=False, parse_answer=True, verb
         if x[1] in ['open', '0']:
             output_list.append((x[0], 0))
         else:
-            output_list.append((x[0], int(x[1][0])))
+            # BTD: int(x[1]) not int(x[1][0]) — the latter kept only the first digit, so a fret >=10
+            # (e.g. a barre chord at fret 12) was silently truncated to 1.
+            output_list.append((x[0], int(x[1])))
 
     return output_list
     print("Failed to parse output:", output)

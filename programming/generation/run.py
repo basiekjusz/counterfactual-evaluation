@@ -20,6 +20,18 @@ def load_data(data_file):
     return [json.loads(line.strip()) for line in open(data_file)]
 
 
+def sanitize_completion(text):
+    """BTD: extract runnable code from a chat completion.
+
+    Chat models wrap the whole function (imports + signature + body) in a ```python fence and prose.
+    Return the last fenced block's contents (language tag stripped); if there is no fence, return the
+    text unchanged. Paired with a blank prompt prefix so the block runs as a standalone program.
+    """
+    import re
+    blocks = re.findall(r"```(?:python|thonpy)?\s*\n(.*?)```", text, flags=re.DOTALL)
+    return blocks[-1].strip("\n") if blocks else text
+
+
 def templatize_0based(obj):
     orig_prompt = obj["prompt"]
     prompt = f"""You are an expert programmer. Complete the following function in Python 3.7. Please only output the code for the completed function.
@@ -99,6 +111,13 @@ def main(
         data = filtered_data
         print(f"filtered # instances {len(data)}")
 
+    # BTD: slice the dataset to BTD_LIMIT so the number of examples matches query_batch's truncated
+    # prompt/response count; otherwise the zip(..., strict=True) below raises (responses too short).
+    _btd_limit = os.environ.get("BTD_LIMIT")
+    if _btd_limit is not None:
+        data = data[: int(_btd_limit)]
+        print(f"BTD-limited # instances {len(data)}")
+
     assert not os.path.exists(output_file)
 
     prompts = []
@@ -112,7 +131,17 @@ def main(
         prompts.append(prompt)
 
     responses = query_batch(prompts, model_name, temperature=temperature, n=num_samples)
+    # BTD: with n==1 query_batch returns a flat list of strings (not list-per-prompt); wrap so the
+    # flatten below doesn't iterate the string characters. (OpenRouter ignores n>1 anyway, so the
+    # smoke uses num_samples=1 — see registry note.)
+    if num_samples == 1:
+        responses = [[r] for r in responses]
     responses = [r for ex_responses in responses for r in ex_responses]
+    # BTD: chat models return a full, markdown-fenced re-definition of the function (with imports),
+    # not a bare continuation. Upstream execs `prompt + completion`, which then double-defines the
+    # signature -> IndentationError -> artificial pass@1=0. Strip the fence and run the completion as
+    # a standalone program (prompt blanked below).
+    responses = [sanitize_completion(r) for r in responses]
 
     # duplicates test data to match the number of outputs.
     duplicate_test_data = [example for example in data for _ in range(num_samples)]
@@ -122,17 +151,31 @@ def main(
     ]
     write_jsonl(output_file, predictions)
 
+    # BTD: pair the standalone-completion sanitising above with a blank prompt prefix so the executed
+    # program is exactly the model's (sanitized) code + the test harness.
+    problems = {
+        example["task_id"]: {**example, "prompt": ""} for example in data
+    }
     pass_at_k_results = evaluate_functional_correctness(
         output_file,
         index_from,
         k=[k],
-        problems={example["task_id"]: example for example in data},
+        problems=problems,
     )
 
     print(pass_at_k_results)
 
 
 if __name__ == "__main__":
+    # BTD: the human_eval sandbox spawns a multiprocessing.Process targeting a *local* function.
+    # macOS defaults to the "spawn" start method (pickles the target -> AttributeError); force "fork"
+    # to match upstream's Linux behaviour. OBJC_DISABLE_INITIALIZE_FORK_SAFETY avoids macOS fork aborts.
+    import multiprocessing
+    os.environ.setdefault("OBJC_DISABLE_INITIALIZE_FORK_SAFETY", "YES")
+    try:
+        multiprocessing.set_start_method("fork")
+    except RuntimeError:
+        pass
     try:
         main(*sys.argv[1:])  # pylint: disable=no-value-for-parameter,too-many-function-args
     except Exception as e:

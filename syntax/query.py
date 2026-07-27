@@ -1,3 +1,4 @@
+import os
 import pandas as pd
 from pathlib import Path
 
@@ -62,6 +63,15 @@ def llm_predict(llm, prompt_template, dataset):
     return responses
 
 
+def _btd_normalize(s):
+    # BTD: canonicalise chat-model formatting so answers aren't marked wrong for cosmetics: strip
+    # markdown emphasis (**/*/`), map unicode dashes to a plain hyphen, and collapse whitespace.
+    s = s.replace("*", "").replace("`", "")
+    for dash in ("—", "–", "−"):  # em / en / minus
+        s = s.replace(dash, "-")
+    return " ".join(s.split())
+
+
 def evaluate_one_example(prediction, example, eval_control):
     if eval_control:
         references = [example["original_sent"].lower()]
@@ -75,6 +85,8 @@ def evaluate_one_example(prediction, example, eval_control):
     prediction = prediction.lower()
     if not eval_control:
         prediction = prediction.rstrip(".")
+    prediction = _btd_normalize(prediction)
+    references = [_btd_normalize(r) for r in references]
     return prediction in references
 
 def evaluate(predictions, holdout_dataset, eval_control):
@@ -93,7 +105,11 @@ if __name__ == "__main__":
 
     parse_flags()
     test_dataset = load_data(FLAGS.word_order)
-    test_dataset = test_dataset.iloc[:100]
+    # BTD: keep the eval dataset in lock-step with query_batch's BTD_LIMIT prompt truncation, else
+    # evaluate() indexes past the responses that were actually generated (IndexError / desync).
+    _btd_limit = os.environ.get("BTD_LIMIT")
+    n_eval = min(100, int(_btd_limit)) if _btd_limit is not None else 100
+    test_dataset = test_dataset.iloc[:n_eval]
     logger.info(f"number of testing examples: {test_dataset.shape[0]}")
 
     prompt_template = prompt_templates[FLAGS.prompt_template]
@@ -101,6 +117,9 @@ if __name__ == "__main__":
 
     predictions = []
     for raw_response in raw_responses:
+        if raw_response is None:  # BTD: empty/failed completion -> counts as an incorrect prediction
+            predictions.append("")
+            continue
         if FLAGS.eval_control:
             prediction = parse_to_obtain_control_res(raw_response)
         else:

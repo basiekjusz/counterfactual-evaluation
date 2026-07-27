@@ -6,9 +6,15 @@ import pickle
 from math import ceil, log2
 from random import random
 
-import anthropic
-import google.api_core.exceptions as palm_exceptions
-import google.generativeai as palm
+try:
+    import anthropic
+except ImportError:  # not needed for the OpenRouter (OpenAI-compatible) path
+    anthropic = None
+try:
+    import google.api_core.exceptions as palm_exceptions
+    import google.generativeai as palm
+except ImportError:  # not needed for the OpenRouter path
+    palm_exceptions = palm = None
 import openai
 from tqdm.asyncio import tqdm_asyncio
 
@@ -16,8 +22,8 @@ openai_initialized = False
 ANTHROPIC_CLIENT = None
 palm_initialized = False
 
-HISTORY_FILE = "history.jsonl"
-CACHE_FILE = "query_cache.pkl"
+HISTORY_FILE = os.environ.get("QUERY_HISTORY_FILE", "history.jsonl")
+CACHE_FILE = os.environ.get("QUERY_CACHE_FILE", "query_cache.pkl")  # BTD: per-model cache isolation
 OPENAI_REFRESH_QUOTA = 60
 OPENAI_EXP_CAP = int(ceil(log2(OPENAI_REFRESH_QUOTA)))
 PALM_MAX_CANDIDATE_COUNT = 8
@@ -51,7 +57,10 @@ async def query_openai(
         wait_time = (1 << min(i, OPENAI_EXP_CAP)) + random() / 10
         try:
             response = await openai.ChatCompletion.acreate(
-                model=model_name, messages=messages, **kwargs
+                # BTD: tasks embed model_name in output PATHS, but OpenRouter slugs contain "/"
+                # (e.g. "openai/gpt-4.1-nano"). The driver passes a slash-safe label ("openai__..")
+                # everywhere; we restore the real slug only here, for the actual API call.
+                model=model_name.replace("__", "/"), messages=messages, **kwargs
             )
             with open(HISTORY_FILE, "a") as f:
                 f.write(json.dumps((model_name, messages, kwargs, response)) + "\n")
@@ -191,6 +200,12 @@ def query_batch(
     n=1,
     **openai_kwargs,
 ):
+    # BTD: cap the number of prompts for subset/smoke runs. Single choke point that every task's
+    # query.py funnels through, so one env var uniformly limits examples regardless of data format.
+    _btd_limit = os.environ.get("BTD_LIMIT")
+    if _btd_limit is not None:
+        prompts = prompts[: int(_btd_limit)]
+
     cache = {}
     if not skip_cache and os.path.exists(CACHE_FILE):
         cache = pickle.load(open(CACHE_FILE, "rb"))
@@ -223,22 +238,7 @@ def query_batch(
     unseen_prompts = list(unseen_prompts)
 
     if len(unseen_prompts) > 0:
-        if model_name in {"gpt-3.5-turbo-0301", "gpt-4-0314"}:
-            if not openai_initialized:
-                openai.api_key = os.environ["OPENAI_API_KEY"]
-            responses = query_batch_wrapper(
-                query_openai,
-                unseen_prompts,
-                model_name,
-                system_msg,
-                history,
-                max_tokens,
-                temperature,
-                retry,
-                n,
-                **openai_kwargs,
-            )
-        elif model_name in {"claude-v1.3"}:
+        if model_name in {"claude-v1.3"}:
             assert system_msg is None and history is None
             global ANTHROPIC_CLIENT
             if ANTHROPIC_CLIENT is None:
@@ -282,7 +282,26 @@ def query_batch(
                 assert len(responses) * n == num_prompts * n == sum(len(r) for r in responses) == len(unseen_prompts)
                 unseen_prompts = orig_unseen_prompts
         else:
-            raise NotImplementedError
+            # OpenAI-compatible path — default for every OpenRouter slug (e.g. anthropic/claude-*,
+            # openai/gpt-*, deepseek/*). Upstream only matched two hardcoded gpt names here; we route
+            # all unknown slugs through OpenRouter's OpenAI-compatible endpoint.
+            global openai_initialized
+            if not openai_initialized:
+                openai.api_key = os.environ.get("OPENROUTER_TOKEN") or os.environ["OPENAI_API_KEY"]
+                openai.api_base = os.environ.get("OPENAI_API_BASE", "https://openrouter.ai/api/v1")
+                openai_initialized = True
+            responses = query_batch_wrapper(
+                query_openai,
+                unseen_prompts,
+                model_name,
+                system_msg,
+                history,
+                max_tokens,
+                temperature,
+                retry,
+                n,
+                **openai_kwargs,
+            )
 
         # Reload cache for better concurrency. Otherwise multiple query processes can overwrite
         # each other

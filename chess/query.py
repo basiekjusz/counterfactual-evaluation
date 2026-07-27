@@ -77,6 +77,11 @@ def main(model_name: str = "gpt-4-0314", cot: bool = True):
                             raise RuntimeError(f"data file {data_file} doesn't exist")
 
                         data = load_data(data_file)
+                        # BTD: keep data in lock-step with query_batch's BTD_LIMIT prompt truncation
+                        # so the zip(..., strict=True) below doesn't raise (responses are shorter).
+                        _btd_limit = os.environ.get("BTD_LIMIT")
+                        if _btd_limit is not None:
+                            data = data[: int(_btd_limit)]
 
                         templatized = [templatize(mode, pgn_string, cot=cot) for pgn_string in data]
                         responses = query_batch(templatized, model_name)

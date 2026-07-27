@@ -50,7 +50,9 @@ class Card:
 
     @classmethod
     def from_str(cls, string: str):
-        number, *figure = string.strip().replace("(", "").replace(")", "").split(" | ")
+        # BTD: chat models often wrap the card in markdown emphasis (e.g. **(1 | red | oval | solid)**);
+        # strip * so int(number) doesn't choke and drop an otherwise-correct card.
+        number, *figure = string.replace("*", "").strip().replace("(", "").replace(")", "").split(" | ")
         color, shape, fill = figure
         return cls(Figure(Color(color), Shape(shape), Fill(fill)), int(number))
 
@@ -310,6 +312,8 @@ def prepare_control(
 
 
 def parse_control(output: str) -> str:
+    if output is None:  # BTD: empty/failed completion -> treated as an incorrect (False) answer
+        output = ""
     answer = output.split("\n")[-1].strip().lower()
     label = False
     if "yes" in answer:
@@ -330,6 +334,8 @@ def parse_control(output: str) -> str:
 
 
 def parse_output(output: str, hints: int = 0, is_hint_text=False) -> List[str]:
+    if output is None:  # BTD: empty/failed completion -> no cards parsed (counts as incorrect)
+        output = ""
     cards = []
     lines = output.split("\n")
     for line in lines:
