@@ -183,7 +183,12 @@ def main(args):
     )
     
     non_cmajor_keys = [k for k in preds_df['key'].unique() if k != 'C major']
-    keys = [['C major'], non_cmajor_keys]
+    if args.world == 'default':
+        keys = [['C major']]
+    elif args.world == 'counterfactual':
+        keys = [non_cmajor_keys]
+    else:
+        keys = [['C major'], non_cmajor_keys]
 
     for key_lst in keys:
         results = get_subset_acc(preds_df[preds_df['key'].isin(key_lst)])

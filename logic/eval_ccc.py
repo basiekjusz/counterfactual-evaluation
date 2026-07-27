@@ -24,8 +24,6 @@ def parse_output(output):
 
 
 def main(data_file, output_file):
-    data = load_data(data_file)
-
     correct = total = 0
     with open(output_file) as f:
         for line in f:

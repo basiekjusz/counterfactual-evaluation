@@ -55,6 +55,8 @@ def main(data_file, model_name, output_file, cot, eval_orig=False):
     eval_orig = parse_bool(eval_orig)
 
     data = load_data(data_file)
+    if os.environ.get("BTD_LIMIT"):
+        data = data[: int(os.environ["BTD_LIMIT"])]
     assert all(
         len(d["premises"].strip().split("\n")) == len(d["orig_premises-FOL"].strip().split("\n"))
         for d in data

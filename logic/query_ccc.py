@@ -48,6 +48,23 @@ def main(data_file, model_name, output_file):
     assert not os.path.exists(output_file)
 
     data = load_data(data_file)
+    if data and "target_premise" not in data[0]:
+        expanded = []
+        for obj in data:
+            for premise, original in zip(
+                obj["premises"].strip().split("\n"),
+                obj["orig_premises"].strip().split("\n"),
+                strict=True,
+            ):
+                if premise != original:
+                    expanded.append({
+                        **obj,
+                        "target_premise": premise,
+                        "target_orig_premise": original,
+                    })
+        data = expanded
+    if os.environ.get("BTD_LIMIT"):
+        data = data[: int(os.environ["BTD_LIMIT"])]
     assert all(
         len(d["premises"].strip().split("\n")) == len(d["orig_premises-FOL"].strip().split("\n"))
         for d in data

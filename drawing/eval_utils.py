@@ -55,17 +55,17 @@ def encode_images(images, processor, model):
 
 def load_images(labels, output_dir):
     imgs = []
+    present_indices = []
     num_missing = 0
-    for label in labels:
+    for index, label in enumerate(labels):
         obj = label.replace(" ", "_")
         img_path = os.path.join(output_dir, obj, f"{obj}.png")
         if not os.path.exists(img_path):
-            img = Image.new("RGB", IMG_SIZE, color="white")
             num_missing += 1
         else:
-            img = Image.open(img_path)
-        imgs.append(img)
-    return imgs, num_missing
+            imgs.append(Image.open(img_path))
+            present_indices.append(index)
+    return imgs, num_missing, present_indices
 
 
 def encode_one_dir(imgs, model, processor, transform):

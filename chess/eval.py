@@ -230,6 +230,7 @@ def main(model_name=None):
                                 continue
                                 # raise RuntimeError(f"Required output file {output_file} doesn't exist.")
                             pred = []
+                            expected = real_world_legal if mode == "real_world" else counter_factual_legal
                             with open(output_file, "r") as f:
                                 for line in f:
                                     line = line.strip().replace("\\n", ". ").replace("\"", " ").replace("\t", " ")
@@ -242,7 +243,7 @@ def main(model_name=None):
                                     elif answer.endswith(" no") or " no " in answer or " no, " in answer or " no " in answer or " no." in answer:
                                         pred.append(0)
                                         success = True
-                                    if not success and " illegal." or "not legal" in answer:
+                                    if not success and (" illegal " in answer or "not legal" in answer):
                                         pred.append(0)
                                         success = True
                                     elif not success and " legal." in answer:
@@ -250,7 +251,8 @@ def main(model_name=None):
                                         success = True
                                     # print(pred[-1], answer)
                                     if not success:
-                                        raise RuntimeError(f"cannot parse the line [{line}]")
+                                        # A malformed completion is one prediction and is incorrect.
+                                        pred.append(int(not expected))
                             pred = np.array(pred).astype(bool)
                             if mode == "real_world":
                                 gt = np.ones_like(pred) if real_world_legal else np.zeros_like(pred)

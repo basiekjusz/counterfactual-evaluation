@@ -23,6 +23,8 @@ def escape(str):
 def main(data_file, base, model_name, output_file):
     base = int(base)
     data = load_data(data_file)
+    if os.environ.get("BTD_LIMIT"):
+        data = data[: int(os.environ["BTD_LIMIT"])]
 
     assert not os.path.exists(output_file)
 

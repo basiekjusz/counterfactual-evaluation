@@ -85,7 +85,11 @@ def main(args,
     # iterate through all given songs, all target keys, indices 0-9
     templatized, query_infos = [], []
         
-    target_keys = KEYS.values()
+    target_keys = list(KEYS.values())
+    if args.world == 'default':
+        target_keys = [key for key in target_keys if key.name == 'C']
+    elif args.world == 'counterfactual':
+        target_keys = [key for key in target_keys if key.name != 'C']
     print(f"KEYS: {[k.name for k in target_keys]}")
     print(f"MODEL:\t{model_name}")
 
@@ -108,6 +112,11 @@ def main(args,
                         templatize(song, target_key, note_idx, args.chain_of_thought, args.is_control))
                 query_infos.append({'song': song_name, 'target_key': str(target_key), 'note': note_idx})
 
+    limit = os.environ.get("BTD_LIMIT")
+    if limit is not None:
+        templatized = templatized[:int(limit)]
+        query_infos = query_infos[:int(limit)]
+
     print('\nEXAMPLE INPUT:')
     print(templatized[0])
     print()
@@ -118,7 +127,7 @@ def main(args,
     assert not os.path.exists(output_file), f"output_file already exists: {output_file}"
 
     with open(output_file, "w") as log:
-        for template, response, query_info in zip(templatized, responses, query_infos):
+        for template, response, query_info in zip(templatized, responses, query_infos, strict=True):
             log.write(f"{query_info['song']}\t{query_info['target_key']}\t{query_info['note']}\t{escape(template)}\t{escape(response)}\n")
 
 if __name__ == "__main__":

@@ -95,6 +95,16 @@ def _append_interactions(records):
             stream.write(_canonical_json(record) + "\n")
 
 
+def _append_request_plan(records):
+    path = os.environ.get("BTD_REQUEST_PLAN_FILE")
+    if not path:
+        return
+    os.makedirs(os.path.dirname(os.path.abspath(path)), exist_ok=True)
+    with open(path, "a", encoding="utf-8") as stream:
+        for record in records:
+            stream.write(_canonical_json(record) + "\n")
+
+
 async def query_openai(
     prompt,
     model_name,
@@ -326,6 +336,29 @@ def query_batch(
             n,
         )
 
+    # Network-free planning uses the exact production cache key and returns shape-compatible
+    # placeholders. It never updates the response cache, history, or normal interaction log.
+    if os.environ.get("BTD_PLAN_ONLY") == "1":
+        plan_records = []
+        for prompt in prompts:
+            key = prompt2key(prompt)
+            hit = key in cache
+            plan_records.append(
+                {
+                    "schema_version": 1,
+                    "request_key": key,
+                    "request": payloads[prompt],
+                    "cache_hit": hit,
+                    "completion_candidates": n,
+                }
+            )
+        _append_request_plan(plan_records)
+        if conn is not None:
+            conn.close()
+        if n == 1:
+            return ["" for _ in prompts]
+        return [["" for _ in range(n)] for _ in prompts]
+
     initial_hits = {prompt: prompt2key(prompt) in cache for prompt in prompts}
     # Preserve first-seen ordering; set() made API call order and histories nondeterministic.
     unseen_prompts = list(dict.fromkeys(
@@ -333,6 +366,19 @@ def query_batch(
     ))
 
     if len(unseen_prompts) > 0:
+        allowed_path = os.environ.get("BTD_ALLOWED_MISS_KEYS_FILE")
+        if allowed_path:
+            with open(allowed_path, encoding="utf-8") as stream:
+                allowed = {line.strip() for line in stream if line.strip()}
+            unexpected = [
+                prompt2key(prompt)
+                for prompt in unseen_prompts
+                if prompt2key(prompt) not in allowed
+            ]
+            if unexpected:
+                raise RuntimeError(
+                    f"{len(unexpected)} unplanned cache miss(es); refusing API calls"
+                )
         if os.environ.get("BTD_CACHE_ONLY") == "1":
             raise RuntimeError(
                 f"cache-only run has {len(unseen_prompts)} missing request(s)"

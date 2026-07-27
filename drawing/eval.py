@@ -36,23 +36,28 @@ def main(data_file, output_dir, type, result_file=None, model_name="large"):
     text_embeds = encode_classes(labels, tokenizer, model)
     n = len(labels)
     img2txt_class_acc = []
-    imgs, num_missing = load_images(labels, output_dir)
+    imgs, num_missing, present_indices = load_images(labels, output_dir)
     transforms = TYPE2TRANSFRROMS[type]
 
-    for transform in transforms:
-        image_embeds = encode_one_dir(imgs, model, processor, transform)
-        assert image_embeds.shape[0] == n
+    if imgs:
+        for transform in transforms:
+            image_embeds = encode_one_dir(imgs, model, processor, transform)
+            assert image_embeds.shape[0] == len(present_indices)
 
-        logits_per_image = torch.matmul(image_embeds, text_embeds.t())
-        targets = torch.arange(n).long()
-        img2txt_class_acc.append(class_accuracy(logits_per_image, targets, topk=TOPK))
+            logits_per_image = torch.matmul(image_embeds, text_embeds.t())
+            targets = torch.tensor(present_indices).long()
+            img2txt_class_acc.append(class_accuracy(logits_per_image, targets, topk=TOPK))
 
-    img2txt_acc = []
+    img2txt_correct = []
     for i in range(len(TOPK)):
+        if not img2txt_class_acc:
+            img2txt_correct.append(0)
+            continue
         best_img2txt_acc = torch.stack(
             [acc[i] for acc in img2txt_class_acc], dim=-1
         ).max(dim=-1)[0]
-        img2txt_acc.append(100 * best_img2txt_acc.sum().item() / n)
+        img2txt_correct.append(int(best_img2txt_acc.sum().item()))
+    img2txt_acc = [100 * correct / n for correct in img2txt_correct]
 
     print("====================Summary====================")
     print(f"Output dir: {output_dir}")
@@ -60,6 +65,7 @@ def main(data_file, output_dir, type, result_file=None, model_name="large"):
     print(f"Model name: {model_name}")
     print(f"Number of images: {n}")
     print(f"Number of missing images: {num_missing}")
+    print(f"Correct counts: Top 1: {img2txt_correct[0]}, Top 5: {img2txt_correct[1]}")
     print(f"Accuracy:", end=" ")
     print(", ".join([f"Top {k}: {acc}" for acc, k in zip(img2txt_acc, TOPK)]))
 

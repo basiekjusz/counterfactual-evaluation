@@ -201,7 +201,10 @@ def main(data_file, model_name, output_file, logreg=False):
     logreg = parse_bool(logreg)
 
     data = load_data(data_file)
-    add_truthfulness(data, model_name)
+    # Truthfulness probes are only features for the optional logistic-regression analysis.  The
+    # previous unconditional call added hundreds of paid requests without changing accuracy.
+    if logreg:
+        add_truthfulness(data, model_name)
 
     correct = total = 0
     bucketed_stats = {}
@@ -218,19 +221,19 @@ def main(data_file, model_name, output_file, logreg=False):
             total += 1
 
             ex = [ex for ex in data if ex["example_id"] == int(id)][0]
-            p_trues = ex["premises_trues"]
-
-            bucket_key = (
-                sum(t == "true" for t in p_trues),
-                sum(t == "false" for t in p_trues),
-                sum(t == "uncertain" for t in p_trues),
-                ex["conclusion_true"] == label.lower(),
-            )
-            if bucket_key not in bucketed_stats:
-                bucketed_stats[bucket_key] = [0, 0]
-            if label == pred:
-                bucketed_stats[bucket_key][0] += 1
-            bucketed_stats[bucket_key][1] += 1
+            if logreg:
+                p_trues = ex["premises_trues"]
+                bucket_key = (
+                    sum(t == "true" for t in p_trues),
+                    sum(t == "false" for t in p_trues),
+                    sum(t == "uncertain" for t in p_trues),
+                    ex["conclusion_true"] == label.lower(),
+                )
+                if bucket_key not in bucketed_stats:
+                    bucketed_stats[bucket_key] = [0, 0]
+                if label == pred:
+                    bucketed_stats[bucket_key][0] += 1
+                bucketed_stats[bucket_key][1] += 1
 
             filtered_data.append(ex)
             preds.append(pred)

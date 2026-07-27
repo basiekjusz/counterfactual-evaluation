@@ -17,7 +17,8 @@ from query_utils import query_batch
 
 
 def load_data(data_file):
-    return [json.loads(line.strip()) for line in open(data_file)]
+    with open(data_file) as stream:
+        return [json.loads(line.strip()) for line in stream]
 
 
 def sanitize_completion(text):
@@ -111,6 +112,15 @@ def main(
         data = filtered_data
         print(f"filtered # instances {len(data)}")
 
+    selected_ids = os.environ.get("BTD_PROGRAM_GENERATION_IDS")
+    if selected_ids:
+        by_id = {obj["task_id"]: obj for obj in data}
+        wanted = selected_ids.split(",")
+        missing = [task_id for task_id in wanted if task_id not in by_id]
+        if missing:
+            raise ValueError(f"Generation ids are not in the valid subset: {missing}")
+        data = [by_id[task_id] for task_id in wanted]
+
     # BTD: slice the dataset to BTD_LIMIT so the number of examples matches query_batch's truncated
     # prompt/response count; otherwise the zip(..., strict=True) below raises (responses too short).
     _btd_limit = os.environ.get("BTD_LIMIT")
@@ -150,6 +160,10 @@ def main(
         for example, output in zip(duplicate_test_data, responses, strict=True)
     ]
     write_jsonl(output_file, predictions)
+
+    if os.environ.get("BTD_PLAN_ONLY") == "1":
+        print({"pass@1": 0.0})
+        return
 
     # BTD: pair the standalone-completion sanitising above with a blank prompt prefix so the executed
     # program is exactly the model's (sanitized) code + the test harness.

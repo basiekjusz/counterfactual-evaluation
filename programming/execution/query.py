@@ -23,7 +23,8 @@ EXCLUDE_IDS = {"HumanEval/32", "HumanEval/38", "HumanEval/50", "HumanEval/53"}
 
 
 def load_data(data_file):
-    return [json.loads(line.strip()) for line in open(data_file)]
+    with open(data_file) as stream:
+        return [json.loads(line.strip()) for line in stream]
 
 
 def templatize_0based(obj, fn_name=None, cot=True):
@@ -93,6 +94,14 @@ def parse_bool(flag):
 def main(data_file, model_name, output_file, index_from, fn_name=None, cot=True):
     cot = parse_bool(cot)
     data = load_data(data_file)
+    selected_ids = os.environ.get("BTD_PROGRAM_EXECUTION_IDS")
+    if selected_ids:
+        by_id = {obj["task_id"]: obj for obj in data}
+        wanted = selected_ids.split(",")
+        missing = [task_id for task_id in wanted if task_id not in by_id]
+        if missing:
+            raise ValueError(f"Unknown execution task ids: {missing}")
+        data = [by_id[task_id] for task_id in wanted]
 
     assert not os.path.exists(output_file)
 
@@ -112,9 +121,9 @@ def main(data_file, model_name, output_file, index_from, fn_name=None, cot=True)
 
     # BTD: keep templatized in lock-step with query_batch's BTD_LIMIT prompt truncation so the
     # zip(..., strict=True) below doesn't raise (responses are shorter than the full templatized set).
-    _btd_limit = os.environ.get("BTD_LIMIT")
-    if _btd_limit is not None:
-        templatized = templatized[: int(_btd_limit)]
+    limit = os.environ.get("BTD_LIMIT")
+    if limit is not None:
+        templatized = templatized[:int(limit)]
 
     responses = query_batch([prompt for prompt, _, _ in templatized], model_name)
 

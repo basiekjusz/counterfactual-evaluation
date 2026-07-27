@@ -61,13 +61,15 @@ def main(model_name: str = "gpt-4-0314", cot: bool = True):
             for mode in ["real_world", "counter_factual"]:
                 pieces = ["white bishop", "black bishop", "white knight", "black knight"]
                 templatized = [templatize(mode, piece, cot=cot, is_control=True) for piece in pieces]
-                responses = query_batch(templatized, model_name, temperature=0.1, n=15)
+                n = int(os.environ.get("BTD_CHESS_N", "15"))
+                responses = query_batch(templatized, model_name, temperature=0.1, n=n)
                 output_file = os.path.join(output_dir, f"{mode}_control.txt")
                 with open(output_file, "w") as log:
                     for piece, response_batch in zip(pieces, responses, strict=True):
+                        if isinstance(response_batch, str):
+                            response_batch = [response_batch]
                         for response in response_batch:
                             log.write(f"{piece} *\t{escape(response)}\n")
-                # continue
                 for real_world_legal in [True, False]:
                     for counter_factual_legal in [True, False]:
                         data_file = \
@@ -78,11 +80,15 @@ def main(model_name: str = "gpt-4-0314", cot: bool = True):
                             raise RuntimeError(f"data file {data_file} doesn't exist")
 
                         data = load_data(data_file)
-                        # BTD: keep data in lock-step with query_batch's BTD_LIMIT prompt truncation
-                        # so the zip(..., strict=True) below doesn't raise (responses are shorter).
-                        _btd_limit = os.environ.get("BTD_LIMIT")
-                        if _btd_limit is not None:
-                            data = data[: int(_btd_limit)]
+                        if os.environ.get("BTD_SMOKE_V2") == "1":
+                            # Only two category files are populated per world. Allocate 3+2,
+                            # producing exactly five openings across the whole world.
+                            take = 3 if real_world_legal else 2
+                            data = data[:take]
+                        else:
+                            limit = os.environ.get("BTD_LIMIT")
+                            if limit is not None:
+                                data = data[:int(limit)]
 
                         templatized = [templatize(mode, pgn_string, cot=cot) for pgn_string in data]
                         responses = query_batch(templatized, model_name)

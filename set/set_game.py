@@ -381,6 +381,7 @@ def evaluate(
             data = pickle.load(handle)
     else:
         data = prepare_data(Game, rounds=rounds, hints=hints, seed=seed, cot=cot)
+    data = data[:rounds]
 
     if save_data:
         data_type = "cf" if Game == CounterfactualSetGame else "real"
@@ -436,6 +437,7 @@ def evaluate_control(
             data = pickle.load(handle)
     else:
         data = prepare_control(Game, rounds=rounds, seed=seed, cot=cot)
+    data = data[:rounds]
 
     if save_data:
         data_type = "cf" if Game == CounterfactualSetGame else "real"
@@ -505,6 +507,7 @@ if __name__ == "__main__":
     parser.add_argument("--save_data", type=str, default="False")
     parser.add_argument("--save_interactions", type=str, default="False")
     parser.add_argument("--load_data", type=str, default="False")
+    parser.add_argument("--primary_only", action="store_true")
 
     args = parser.parse_args()
 
@@ -568,6 +571,8 @@ if __name__ == "__main__":
         save_data=args.save_data,
         load_data=args.load_data,
     )
+    if args.primary_only:
+        raise SystemExit(0)
     evaluate(
         Game=SETGame,
         model=args.model,
