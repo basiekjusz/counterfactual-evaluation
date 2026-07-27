@@ -333,6 +333,10 @@ def query_batch(
     ))
 
     if len(unseen_prompts) > 0:
+        if os.environ.get("BTD_CACHE_ONLY") == "1":
+            raise RuntimeError(
+                f"cache-only run has {len(unseen_prompts)} missing request(s)"
+            )
         if model_name in {"claude-v1.3"}:
             assert system_msg is None and history is None
             global ANTHROPIC_CLIENT
